@@ -1,4 +1,8 @@
-﻿namespace nClam
+﻿using System.Net.Security;
+using System.Security.Authentication;
+using System.Security.Cryptography.X509Certificates;
+
+namespace nClam
 {
     using System;
     using System.IO;
@@ -34,6 +38,11 @@
         /// Port which the ClamAV server is listening on
         /// </summary>
         public int Port { get; set; }
+        
+        /// <summary>
+        /// Determines whether the client will use TLS when connecting to the ClamAV server
+        /// </summary>
+        private bool _useTls { get; }
 
         private ClamClient()
         {
@@ -46,10 +55,11 @@
         /// </summary>
         /// <param name="server">Address to the ClamAV server</param>
         /// <param name="port">Port which the ClamAV server is listening on</param>
-        public ClamClient(string server, int port = 3310) : this()
+        public ClamClient(string server, int port = 3310, bool useTls = false) : this()
         {
             Server = server;
             Port = port;
+            _useTls = useTls;
         }
 
         /// <summary>
@@ -57,10 +67,11 @@
         /// </summary>
         /// <param name="serverIP">IP Address to the ClamAV server</param>
         /// <param name="port">Port which the ClamAV server is listening on</param>
-        public ClamClient(IPAddress serverIP, int port = 3310) : this()
+        public ClamClient(IPAddress serverIP, int port = 3310, bool useTls = false) : this()
         {
             ServerIP = serverIP;
             Port = port;
+            _useTls = useTls;
         }
 
         /// <summary>
@@ -78,20 +89,36 @@
             string result;
 
             var clam = new TcpClient(AddressFamily.InterNetwork);
-
+            
             try
             {
                 using var stream = await CreateConnection(clam).ConfigureAwait(false);
+
+                Stream currentStream;
+                
+                if (_useTls)
+                {
+                    var sslStream = new SslStream(clam.GetStream(), false, ValidateServerCertificate, null);
+                
+                    await sslStream.AuthenticateAsClientAsync(Server).ConfigureAwait(false);
+
+                    currentStream = sslStream;
+                }
+                else
+                {
+                    currentStream = stream;
+                }
+                
                 var commandText = $"z{command}\0";
                 var commandBytes = Encoding.UTF8.GetBytes(commandText);
-                await stream.WriteAsync(commandBytes, 0, commandBytes.Length, cancellationToken).ConfigureAwait(false);
+                await currentStream.WriteAsync(commandBytes, 0, commandBytes.Length, cancellationToken).ConfigureAwait(false);
 
                 if (additionalCommand != null)
                 {
-                    await additionalCommand(stream, cancellationToken).ConfigureAwait(false);
+                    await additionalCommand(currentStream, cancellationToken).ConfigureAwait(false);
                 }
 
-                using var reader = new StreamReader(stream);
+                using var reader = new StreamReader(currentStream);
                 result = await reader.ReadToEndAsync().ConfigureAwait(false);
 
                 if (!String.IsNullOrEmpty(result))
@@ -112,6 +139,17 @@
             System.Diagnostics.Debug.WriteLine("Command {0} took: {1}", command, stopWatch.Elapsed);
 #endif
             return result;
+        }
+
+        private static bool ValidateServerCertificate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
+        {
+            if (sslPolicyErrors == SslPolicyErrors.None)
+            {
+                return true;
+            }
+
+            Console.WriteLine("Certificate error: {0}", sslPolicyErrors);
+            return false;
         }
 
         /// <summary>
