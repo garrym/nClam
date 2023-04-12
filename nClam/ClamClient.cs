@@ -42,7 +42,7 @@ namespace nClam
         /// <summary>
         /// Determines whether the client will use TLS when connecting to the ClamAV server
         /// </summary>
-        private bool _useTls { get; }
+        private bool UseTls { get; set; }
 
         private ClamClient()
         {
@@ -59,7 +59,7 @@ namespace nClam
         {
             Server = server;
             Port = port;
-            _useTls = useTls;
+            UseTls = useTls;
         }
 
         /// <summary>
@@ -71,7 +71,7 @@ namespace nClam
         {
             ServerIP = serverIP;
             Port = port;
-            _useTls = useTls;
+            UseTls = useTls;
         }
 
         /// <summary>
@@ -89,36 +89,36 @@ namespace nClam
             string result;
 
             var clam = new TcpClient(AddressFamily.InterNetwork);
-            
+
             try
             {
-                using var stream = await CreateConnection(clam).ConfigureAwait(false);
+                using var innerStream = await CreateConnection(clam).ConfigureAwait(false);
 
-                Stream currentStream;
+                Stream stream;
                 
-                if (_useTls)
+                if (UseTls)
                 {
-                    var sslStream = new SslStream(clam.GetStream(), false, ValidateServerCertificate, null);
+                    var sslStream = new SslStream(innerStream, false, ValidateServerCertificate, null);
                 
                     await sslStream.AuthenticateAsClientAsync(Server).ConfigureAwait(false);
 
-                    currentStream = sslStream;
+                    stream = sslStream;
                 }
                 else
                 {
-                    currentStream = stream;
+                    stream = innerStream;
                 }
                 
                 var commandText = $"z{command}\0";
                 var commandBytes = Encoding.UTF8.GetBytes(commandText);
-                await currentStream.WriteAsync(commandBytes, 0, commandBytes.Length, cancellationToken).ConfigureAwait(false);
+                await stream.WriteAsync(commandBytes, 0, commandBytes.Length, cancellationToken).ConfigureAwait(false);
 
                 if (additionalCommand != null)
                 {
-                    await additionalCommand(currentStream, cancellationToken).ConfigureAwait(false);
+                    await additionalCommand(stream, cancellationToken).ConfigureAwait(false);
                 }
 
-                using var reader = new StreamReader(currentStream);
+                using var reader = new StreamReader(stream);
                 result = await reader.ReadToEndAsync().ConfigureAwait(false);
 
                 if (!String.IsNullOrEmpty(result))
